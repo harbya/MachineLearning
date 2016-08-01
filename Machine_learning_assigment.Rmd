@@ -1,0 +1,198 @@
+---
+title: "Machine Learning Assigment"
+author: "Harby Ariza"
+date: "17 July 2016"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+When choosing predicting models , one of the most important topics to consider is how we predict errors. Predicting errors can be defined into two main subcomponents that we should care about: errors due to "bias" and errors due to "variance".There is a tradeoff between a model's ability to minimize bias and variance. Errors due to Bias is defined as the difference between the expected prediction of our model and the correct value we are trying to predict. Errors due to Variance is defined as the variability of a model prediction for a given data set. This two main subcomponents will be taken into account in order to choose our "Best Model". In this exercise we'll be executing a variety of classification algorithms such as trees , SVM , Random forest and Boosting. The last two in particular seems to be the top performers and due to this reason they are highly use in prediction competitions like Kaggle and others. Random Forest rely on bagging (Bootstrap Aggregating) and resampling techniques that are commonly use to reduce the variance in model predictions.
+
+
+ 
+
+##Data
+
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>.
+
+
+
+
+```{r ,eval=FALSE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = 'D:\\R\\pml-training.csv')
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = 'D:\\R\\pml-testing.csv')
+```
+
+
+```{r,echo=FALSE,results='hide',include=FALSE}
+suppressWarnings(library(rpart,warn.conflicts=FALSE))
+suppressWarnings(library(randomForest,warn.conflicts=FALSE))
+suppressWarnings(library(caret,warn.conflicts=FALSE))
+suppressWarnings(library(gdata,warn.conflicts=FALSE))
+suppressWarnings(library(parallel,warn.conflicts=FALSE))
+suppressWarnings(library(doParallel,warn.conflicts=FALSE))
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+suppressWarnings(registerDoParallel(cluster))
+library(e1071)
+##setwd("D:\\R")
+```
+
+## Loading the Data and Cleanup 
+
+One of the more important things to do before execute the classifier algorithm is to identify what columns in the data set are relevant and can become good predictors. So first we remove all columns containing NA's because they are usefull at all. Secondly something I did learn testing with these differents classiffiers algorithms is that some of them have some good capability/features that can be used to perform some sort of exploratory Analysis. For instance now I'll be executing a Random Forest classifier to the trainset but I want to list on the variable importance list provided by this model. Now as you can see below in the output of the varImp function there are a bunch of irrelevant variables that appears at the top of the list. For instance the variable X plus others containing Time-Stamp information. They offer no value so I'll remove them from the trainset dataset.
+
+
+```{r , echo=TRUE,cache=TRUE}
+pmlTrain<-read.csv("D:\\R\\pml-training.csv", header=T, na.strings=c("NA","#DIV/0!"))
+pmlTest<-read.csv("D:\\R\\pmltesting.csv", header=T, na.string=c("NA", "#DIV/0!"))
+
+pmlTrainNoNa<-pmlTrain[, apply(pmlTrain, 2, function(x) !any(is.na(x)))]       ## remove columns with NA's 
+TidyTrain<-pmlTrainNoNa
+inTrain <- createDataPartition(y=TidyTrain$classe,p=0.6, list=FALSE)
+trainset <- TidyTrain[inTrain,]
+testset <- TidyTrain[-inTrain,]
+dim(trainset);dim(testset)
+```
+
+```{r , echo=TRUE,cache=TRUE}
+fitControl <- trainControl(method = "cv",number = 5,allowParallel = TRUE)
+forestDataTest.fit <- train(classe~ .,data=trainset,method="rf",prox=TRUE,allowParallel = TRUE,trControl = fitControl,importance=TRUE)
+varImp(forestDataTest.fit)
+```
+
+
+```{r , echo=TRUE,cache=TRUE}
+TidyTrain<-pmlTrainNoNa[,-c(1:7)]   ## remove unnecessary variables
+inTrain <- createDataPartition(y=TidyTrain$classe,p=0.6, list=FALSE)
+trainset <- TidyTrain[inTrain,]
+testset <- TidyTrain[-inTrain,]
+table(trainset$class)
+table(testset$class)
+dim(trainset);dim(testset)
+```
+
+
+A decision tree model was generated using the code below. A cross-validation of K=5 was applied to the trainset dataset.
+
+
+```{r , echo=TRUE,cache=TRUE}
+set.seed(1234)
+start.time <- Sys.time()
+dtree.fit <- rpart(classe ~ ., data=trainset, method="class",control=rpart.control(xval=5),parms=list(split="information"))
+end.time <- Sys.time();time.taken <- end.time - start.time;time.taken
+dtree.pred <- predict(dtree.fit, testset, type="class")
+dtree.perf <- table(testset$classe, dtree.pred,
+                    dnn=c("Actual", "Predicted"))
+```
+
+
+
+```{r,echo=FALSE,results='hide'}
+performance <- function(table, n=5){
+if(!all(dim(table) == c(5,5)))
+stop("Must be a 2 x 2 table")
+tn = table[1,1]
+fp = table[1,2]
+fn = table[2,1]
+tp = table[2,2]
+sensitivity = tp/(tp+fn)
+specificity = tn/(tn+fp)
+ppp = tp/(tp+fp)
+npp = tn/(tn+fn)
+hitrate = (tp+tn)/(tp+tn+fp+fn)
+result <- paste("Sensitivity = ", round(sensitivity, n) ,
+"\nSpecificity = ", round(specificity, n),
+"\nPositive Predictive Value = ", round(ppp, n),
+"\nNegative Predictive Value = ", round(npp, n),
+"\nAccuracy = ", round(hitrate, n), "\n", sep="")
+cat(result)
+}
+```
+
+Here we can see the Accuracy of the decision tree model.
+```{r , echo=TRUE}
+confusionMatrix(dtree.perf)
+performance(dtree.perf)
+```
+
+A SVM model was generated using the code below. Cross-Validation of k=10 was applied to the trainset dataset.
+```{r , echo=TRUE,cache=TRUE}
+set.seed(1234)
+start.time <- Sys.time()
+svm.fit <- svm(classe~., data=trainset,cross=10)
+end.time <- Sys.time();time.taken <- end.time - start.time;time.taken
+svm.pred <- predict(svm.fit, na.omit(testset))
+svm.perf <- table(na.omit(testset)$class,svm.pred, dnn=c("Actual", "Predicted"))
+```
+
+Here we can see the Accuracy of the SVM model.
+```{r,echo=TRUE}
+confusionMatrix(svm.perf)
+performance(svm.perf)
+```
+
+A Random Forest model was generated using the code below. Cross-validation using k=5 was performed. 
+
+```{r,echo=TRUE,cache=TRUE}
+set.seed(1234)
+start.time <- Sys.time()
+fitControl <- trainControl(method = "cv",number = 5,allowParallel = TRUE)
+forest.fit <- train(classe~ .,data=trainset,method="rf",prox=TRUE,allowParallel = TRUE,trControl = fitControl,importance=TRUE)
+end.time <- Sys.time();time.taken <- end.time - start.time;time.taken
+forest.pred <- predict(forest.fit, testset)
+forest.perf <- table(testset$class, forest.pred,dnn=c("Actual", "Predicted"))
+forest.perf
+```
+
+```{r,fig.width=12, fig.height=5}
+varImp(forest.fit)
+```
+
+```{r,echo=TRUE,cache=TRUE}
+confusionMatrix(forest.perf)
+performance(forest.perf)
+```
+A Boosting model was generated using the code below. 
+Cross-validation is performed implicity by this model as well using
+bagging and resampling techniques but anyway Cross-validation using k=5 was performed.The only drawback using this approach that might affect the run-time of the model during the classification process but the accuracy of the model might improve as more learning is achieved by the model. 
+```{r,echo=TRUE,cache=TRUE}
+set.seed(1234)
+start.time <- Sys.time()
+fitControl <- trainControl(method = "cv",number = 5,allowParallel = TRUE)
+boost.fit <- train(classe ~ ., method="gbm",data=trainset,verbose=FALSE,trControl = fitControl)
+end.time <- Sys.time();time.taken <- end.time - start.time;time.taken
+boost.pred <- predict(boost.fit, testset)
+boost.perf <- table(testset$class, boost.pred,dnn=c("Actual", "Predicted"))
+```
+
+```{r,echo=TRUE,cache=TRUE}
+confusionMatrix(boost.perf)
+```
+
+
+```{r,echo=TRUE,cache=TRUE}
+performance(boost.perf)
+```
+
+## Analysis / Review and Conclusions
+
+Now we'll be looking at the measures of predictive accuracy displayed by each executed model.Each of these model/classifiers performed quite well but in particular.
+the random forest model outperformed the others. For instance Sensitivity was 98% of which is the probability of getting a positive classification when the true outcome is positive, then Specificity was 99% which is the probability of getting a negative classification when the true outcome is negative.Positive Predictive Value of 99% which is the probability that an observation with a positive classification is correctly identified as positive. Negative Predictive Value of 99% which is the probability that an observation with a negative classification is correctly identified as negative.Accuracy of 99% which is the proportion of observations correctly identified.Also with a Kappa coeficient of 99%  which is basically telling us that there is a high level of aggreetments between the observers involve in the classification. Furthermore I executed cross-Validation using K=100 K=50 K=20 K=10 and K=5 in order to verify that changing the size of the folds might impact the results of the predictions and practically I got the exactly the same results therefore for the Efficiency or best run-time (elapse time taken by the classifier to execute and generate the model) I've selected the cross-validation with K=5 which completed in less time. It looks like that when it comes to clasifying qualitative data these models can perform well but another factor/variable to consider is the computational time taken by the classifier to complete. This is why I collected the star.time and end.time for each exeuction because when ones of these algorithms is implemented in a live/production system efficieny really matters.
+  
+
